@@ -63,6 +63,7 @@ enum class HomeMenuAction {
   ReadingStats,
   Bookmarks,
   FileTransfer,
+  Anki,
   Settings,
 };
 
@@ -280,6 +281,7 @@ void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasRe
     items.push({savedItemsLabel(hasBookmarks, hasClippings), BookmarkIcon, HomeMenuAction::Bookmarks});
   }
 
+  items.push({tr(STR_ANKI), Anki, HomeMenuAction::Anki});
   items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
   items.push({tr(STR_SETTINGS_TITLE), Settings, HomeMenuAction::Settings});
 }
@@ -305,6 +307,7 @@ HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasReadingStats,
     items.push({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
   }
 
+  items.push({tr(STR_ANKI), Anki, HomeMenuAction::Anki});
   items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
   return items;
 }
@@ -329,6 +332,8 @@ HomeMenuAction homeActionForInitialMenuItem(HomeMenuItem item) {
       return HomeMenuAction::LockScreens;
     case HomeMenuItem::OPDS_BROWSER:
       return HomeMenuAction::OpdsBrowser;
+    case HomeMenuItem::ANKI:
+      return HomeMenuAction::Anki;
     case HomeMenuItem::FILE_TRANSFER:
       return HomeMenuAction::FileTransfer;
     case HomeMenuItem::SETTINGS_MENU:
@@ -1584,6 +1589,9 @@ void HomeActivity::loop() {
           case HomeMenuAction::FileTransfer:
             onFileTransferOpen();
             break;
+          case HomeMenuAction::Anki:
+            onAnkiOpen();
+            break;
           case HomeMenuAction::ContinueReading:
           case HomeMenuAction::Settings:
             break;
@@ -1831,6 +1839,9 @@ void HomeActivity::loop() {
         break;
       case HomeMenuAction::FileTransfer:
         onFileTransferOpen();
+        break;
+      case HomeMenuAction::Anki:
+        onAnkiOpen();
         break;
       case HomeMenuAction::Settings:
         onSettingsOpen();
@@ -2432,4 +2443,8 @@ void HomeActivity::onReadingStatsOpen() {
 void HomeActivity::onSavedItemsOpen() {
   startActivityForResult(std::make_unique<SavedItemsHomeActivity>(renderer, mappedInput),
                          [this](const ActivityResult&) { requestUpdate(); });
+}
+
+void HomeActivity::onAnkiOpen() {
+  activityManager.goToAnki();
 }

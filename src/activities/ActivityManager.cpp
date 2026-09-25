@@ -19,6 +19,7 @@
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
+#include "activities/anki/AnkiActivity.h"
 #include "components/TouchRegistry.h"
 #include "home/AlertActivity.h"
 #include "home/CrashActivity.h"
@@ -689,6 +690,10 @@ void ActivityManager::goToSettings(const bool dismissOnUpSwipe) {
   replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput, dismissOnUpSwipe));
 }
 
+void ActivityManager::goToAnki() {
+  replaceActivity(std::make_unique<AnkiActivity>(renderer, mappedInput));
+}
+
 void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));
 }
@@ -789,6 +794,8 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, const HalDisplay::Ref
       initialMenuItem = HomeMenuItem::FILE_TRANSFER;
     } else if (activityName == "NearbyStatsSync") {
       initialMenuItem = HomeMenuItem::FILE_TRANSFER;
+    } else if (activityName == "Anki") {
+      initialMenuItem = HomeMenuItem::ANKI;
     } else if (activityName == "Settings") {
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
     }

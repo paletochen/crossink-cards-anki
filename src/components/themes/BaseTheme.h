@@ -145,7 +145,8 @@ enum UIIcon {
   Wifi,
   Hotspot,
   Chart,
-  LockScreens
+  LockScreens,
+  Anki
 };
 
 // Default theme implementation (Classic Theme)

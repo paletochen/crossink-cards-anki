@@ -27,7 +27,7 @@ class Activity;    // forward declaration
 class RenderLock;  // forward declaration
 
 enum class RequestUpdateResult { Rendered, Rejected };
-enum class HomeMenuItem { NONE, FILE_BROWSER, RECENTS, LOCK_SCREENS, OPDS_BROWSER, FILE_TRANSFER, SETTINGS_MENU };
+enum class HomeMenuItem { NONE, FILE_BROWSER, RECENTS, ANKI, LOCK_SCREENS, OPDS_BROWSER, FILE_TRANSFER, SETTINGS_MENU };
 
 /**
  * ActivityManager
@@ -121,6 +121,7 @@ class ActivityManager {
   bool goToNearbyBookSend(std::string path, bool returnToReader);
   void goToNearbyBookReceive();
   void goToSettings(bool dismissOnUpSwipe = false);
+  void goToAnki();
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
   void goToBrowser();

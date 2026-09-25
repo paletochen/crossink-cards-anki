@@ -461,6 +461,7 @@ void silentRestartToNetwork(const NetworkBootTarget target, const uint32_t paylo
 }
 
 void silentRestartToManageFonts() { silentRestartToNetwork(NetworkBootTarget::MANAGE_FONTS); }
+void silentRestartToAnki() { silentRestartToNetwork(NetworkBootTarget::ANKI); }
 
 static uint32_t encodeKOReaderSyncOrientation(const uint8_t orientation) {
   return orientation < CrossPointSettings::ORIENTATION_COUNT ? static_cast<uint32_t>(orientation) + 1 : 0;
@@ -1599,6 +1600,10 @@ void setup() {
         }
         break;
       }
+      case NetworkBootTarget::ANKI:
+        activityManager.goToAnki();
+        launched = true;
+        break;
     }
     if (!launched) {
       LOG_ERR("MAIN", "Minimal network boot target failed; returning home");
