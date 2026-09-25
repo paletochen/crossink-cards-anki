@@ -59,10 +59,11 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
 
   const auto res = updater.checkForUpdate();
   if (res != OtaUpdater::OK) {
-    LOG_DBG("OTA", "Update check failed: %d", res);
+    LOG_ERR("OTA", "Update check failed: %d (%s)", res, updater.getLastErrorDetail().c_str());
     {
       RenderLock lock(*this);
       failureMessage = failureMessageFor(res);
+      failureDetail = updater.getLastErrorDetail();
       state = FAILED;
     }
     requestUpdate(true);
@@ -186,6 +187,9 @@ void OtaUpdateActivity::render(RenderLock&&) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == FAILED) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, I18n::getInstance().get(failureMessage), true, EpdFontFamily::BOLD);
+    if (!failureDetail.empty()) {
+      renderer.drawCenteredText(UI_10_FONT_ID, top + height + metrics.verticalSpacing, failureDetail.c_str());
+    }
     const auto labels = mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), "", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == FINISHED) {
@@ -221,10 +225,11 @@ void OtaUpdateActivity::runUpdateInstall() {
       this);
 
   if (res != OtaUpdater::OK) {
-    LOG_DBG("OTA", "Update failed: %d", res);
+    LOG_ERR("OTA", "Update install failed: %d (%s)", res, updater.getLastErrorDetail().c_str());
     {
       RenderLock lock(*this);
       failureMessage = failureMessageFor(res);
+      failureDetail = updater.getLastErrorDetail();
       state = FAILED;
     }
     requestUpdate();

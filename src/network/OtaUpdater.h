@@ -11,6 +11,7 @@ class OtaUpdater {
   size_t otaSize = 0;
   size_t processedSize = 0;
   size_t totalSize = 0;
+  std::string lastErrorDetail;
 
  public:
   using ProgressCallback = void (*)(void* ctx);
@@ -35,6 +36,7 @@ class OtaUpdater {
   size_t getProcessedSize() const { return processedSize; }
 
   size_t getTotalSize() const { return totalSize; }
+  const std::string& getLastErrorDetail() const { return lastErrorDetail; }
 
   OtaUpdater() = default;
   bool isUpdateNewer() const;

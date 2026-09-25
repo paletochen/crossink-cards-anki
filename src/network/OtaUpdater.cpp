@@ -299,11 +299,13 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   client_config.keep_alive_enable = true;
 
   totalBytesReceived = 0;
-  LOG_DBG("OTA", "Checking for update (current: %s)", CROSSINK_VERSION);
+  lastErrorDetail.clear();
+  LOG_INF("OTA", "Checking for update (current: %s) from %s", CROSSINK_VERSION, latestReleaseUrl);
 
   esp_http_client_handle_t client_handle = esp_http_client_init(&client_config);
   if (!client_handle) {
     LOG_ERR("OTA", "HTTP Client Handle Failed");
+    lastErrorDetail = "HTTP init failed";
     return INTERNAL_UPDATE_ERROR;
   }
 
@@ -313,13 +315,31 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   }
   if (esp_err != ESP_OK) {
     LOG_ERR("OTA", "esp_http_client_set_header Failed : %s", esp_err_to_name(esp_err));
+    lastErrorDetail = "Header config error";
     esp_http_client_cleanup(client_handle);
     return INTERNAL_UPDATE_ERROR;
   }
 
   esp_err = esp_http_client_perform(client_handle);
+  int statusCode = esp_http_client_get_status_code(client_handle);
+  int64_t contentLength = esp_http_client_get_content_length(client_handle);
+  LOG_INF("OTA", "HTTP perform completed: err=%s, status=%d, content_length=%lld, rx=%zu",
+          esp_err_to_name(esp_err), statusCode, contentLength, totalBytesReceived);
+
   if (esp_err != ESP_OK) {
-    LOG_ERR("OTA", "esp_http_client_perform Failed : %s", esp_err_to_name(esp_err));
+    LOG_ERR("OTA", "esp_http_client_perform Failed : %s (HTTP status %d)", esp_err_to_name(esp_err), statusCode);
+    lastErrorDetail = "Check failed: " + std::string(esp_err_to_name(esp_err));
+    esp_http_client_cleanup(client_handle);
+    return HTTP_ERROR;
+  }
+
+  if (statusCode < 200 || statusCode >= 300) {
+    LOG_ERR("OTA", "HTTP server returned error status: %d (rx: %zu bytes)", statusCode, totalBytesReceived);
+    if (statusCode == 403) {
+      lastErrorDetail = "GitHub rate limit (403)";
+    } else {
+      lastErrorDetail = "HTTP status " + std::to_string(statusCode);
+    }
     esp_http_client_cleanup(client_handle);
     return HTTP_ERROR;
   }
@@ -327,15 +347,16 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   esp_err = esp_http_client_cleanup(client_handle);
   if (esp_err != ESP_OK) {
     LOG_ERR("OTA", "esp_http_client_cleanup Failed : %s", esp_err_to_name(esp_err));
+    lastErrorDetail = "Cleanup failed";
     return INTERNAL_UPDATE_ERROR;
   }
 
-  LOG_DBG("OTA", "Response received: %zu bytes total", totalBytesReceived);
-  LOG_DBG("OTA", "Parser results: tag=%s firmware=%s", releaseParser.foundTag() ? "yes" : "no",
-          releaseParser.foundFirmware() ? "yes" : "no");
+  LOG_INF("OTA", "Response received: %zu bytes total. Parser: tag=%s firmware=%s", totalBytesReceived,
+          releaseParser.foundTag() ? "yes" : "no", releaseParser.foundFirmware() ? "yes" : "no");
 
   if (!releaseParser.foundTag()) {
     LOG_ERR("OTA", "No tag_name in release JSON");
+    lastErrorDetail = "No tag in release JSON";
     return JSON_PARSE_ERROR;
   }
 
@@ -343,6 +364,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
 
   if (!releaseParser.foundFirmware()) {
     LOG_ERR("OTA", "No matching %s asset found for release %s", firmwareAssetStem, latestVersion.c_str());
+    lastErrorDetail = "No firmware asset in release";
     return NO_UPDATE;
   }
 
@@ -352,9 +374,9 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   totalSize = otaSize;
   updateAvailable = true;
 
-  LOG_DBG("OTA", "Found update: tag=%s size=%zu sha256=%s", latestVersion.c_str(), otaSize,
+  LOG_INF("OTA", "Found update: tag=%s size=%zu sha256=%s", latestVersion.c_str(), otaSize,
           otaSha256.empty() ? "missing" : "present");
-  LOG_DBG("OTA", "Firmware URL: %s", otaUrl.c_str());
+  LOG_INF("OTA", "Firmware URL: %s", otaUrl.c_str());
   return OK;
 }
 
@@ -464,12 +486,15 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
   HttpDownloader::DownloadOptions downloadOptions;
   downloadOptions.shouldCancel = isCancellationRequested;
   // wolfSSL currently has no CA bundle, so only use it when the trusted release
-  // manifest supplied a digest that pins the firmware bytes. Older HTTPS
-  // releases without a digest retain the verified esp_http_client path.
+  // manifest supplied a digest that pins the firmware bytes.
+  // Note: if wolfSSL fails (e.g. handshake failure, memory spike, or TLS error on redirect),
+  // we will try falling back to the standard ESP_HTTP transport before aborting.
   if (hasManifestSha256) downloadOptions.transport = HttpDownloader::Transport::WOLFSSL;
-  LOG_INF("OTA", "Staging firmware download: url=%s heap=%u maxAlloc=%u", otaUrl.c_str(), ESP.getFreeHeap(),
-          ESP.getMaxAllocHeap());
-  const auto transferResult = HttpDownloader::downloadToFile(
+  LOG_INF("OTA", "Staging firmware download: url=%s heap=%u maxAlloc=%u transport=%s", otaUrl.c_str(),
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+          downloadOptions.transport == HttpDownloader::Transport::WOLFSSL ? "wolfSSL" : "ESP_HTTP");
+
+  auto transferResult = HttpDownloader::downloadToFile(
       otaUrl, OTA_STAGE_PATH,
       [&](const size_t downloaded, const size_t total) {
         if (stagingWork == 0 && total > 0) {
@@ -480,20 +505,45 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
         processedSize = downloaded;
         notifyOtaProgress(&installCtx, false);
       },
-      nullptr, "", "", std::move(downloadOptions));
+      nullptr, "", "", downloadOptions);
+
+  if (transferResult != HttpDownloader::OK && downloadOptions.transport == HttpDownloader::Transport::WOLFSSL &&
+      !isCancellationRequested()) {
+    LOG_INF("OTA", "wolfSSL staging download failed (result=%d); retrying with ESP_HTTP transport",
+            static_cast<int>(transferResult));
+    Storage.remove(OTA_STAGE_PATH);
+    processedSize = 0;
+    downloadOptions.transport = HttpDownloader::Transport::ESP_HTTP;
+    transferResult = HttpDownloader::downloadToFile(
+        otaUrl, OTA_STAGE_PATH,
+        [&](const size_t downloaded, const size_t total) {
+          if (stagingWork == 0 && total > 0) {
+            stagingWork = total;
+            totalSize = stagingWork * 2;
+            installCtx.totalSize = totalSize;
+          }
+          processedSize = downloaded;
+          notifyOtaProgress(&installCtx, false);
+        },
+        nullptr, "", "", downloadOptions);
+  }
 
   if (transferResult != HttpDownloader::OK) {
     if (transferResult == HttpDownloader::ABORTED || isCancellationRequested()) {
       LOG_INF("OTA", "Update cancelled");
+      lastErrorDetail = "Cancelled";
       return CANCELLED_ERROR;
     }
-    LOG_ERR("OTA", "Firmware download failed after %zu/%zu bytes", processedSize, totalSize);
+    LOG_ERR("OTA", "Firmware download failed after %zu/%zu bytes (err=%d)", processedSize, totalSize,
+            static_cast<int>(transferResult));
+    lastErrorDetail = "Download failed (code " + std::to_string(static_cast<int>(transferResult)) + ")";
     return HTTP_ERROR;
   }
 
   HalFile stagedFile;
   if (!Storage.openFileForRead("OTA", OTA_STAGE_PATH, stagedFile) || !stagedFile) {
     LOG_ERR("OTA", "Failed to open staged firmware: %s", OTA_STAGE_PATH);
+    lastErrorDetail = "Cannot open staged file";
     Storage.remove(OTA_STAGE_PATH);
     return INTERNAL_UPDATE_ERROR;
   }
@@ -503,6 +553,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
     const StagedHashResult hashResult = verifyStagedHash(stagedFile, otaSha256.c_str(), &stagedSize);
     if (hashResult == StagedHashResult::MISMATCH) {
       LOG_ERR("OTA", "Firmware sha256 mismatch: expected=%s", otaSha256.c_str());
+      lastErrorDetail = "SHA256 mismatch";
       stagedFile.close();
       Storage.remove(OTA_STAGE_PATH);
       return HASH_MISMATCH_ERROR;
@@ -510,6 +561,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
     if (hashResult != StagedHashResult::OK) {
       stagedFile.close();
       Storage.remove(OTA_STAGE_PATH);
+      lastErrorDetail = hashResult == StagedHashResult::OOM ? "Out of memory" : "Hash verify failed";
       return hashResult == StagedHashResult::OOM ? OOM_ERROR : INTERNAL_UPDATE_ERROR;
     }
     LOG_INF("OTA", "Firmware sha256 verified");
@@ -517,6 +569,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
 
   if (otaSize > 0 && stagedSize != otaSize) {
     LOG_ERR("OTA", "Firmware size mismatch: got %zu, expected %zu", stagedSize, otaSize);
+    lastErrorDetail = "Size mismatch";
     stagedFile.close();
     Storage.remove(OTA_STAGE_PATH);
     return INTERNAL_UPDATE_ERROR;
@@ -525,6 +578,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
   const auto validationResult = firmware_flash::validateOpenImageFile(stagedFile, updatePartition->size);
   if (validationResult != firmware_flash::Result::OK) {
     LOG_ERR("OTA", "Staged firmware validation failed: %s", firmware_flash::resultName(validationResult));
+    lastErrorDetail = std::string("Validation: ") + firmware_flash::resultName(validationResult);
     stagedFile.close();
     Storage.remove(OTA_STAGE_PATH);
     if (validationResult == firmware_flash::Result::BAD_CHIP ||

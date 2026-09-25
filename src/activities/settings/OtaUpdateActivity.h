@@ -24,6 +24,7 @@ class OtaUpdateActivity : public Activity {
   ScreenTransitionRefresh screenTransitionRefresh;
   unsigned int lastUpdaterPercentage = UNINITIALIZED_PERCENTAGE;
   StrId failureMessage = StrId::STR_UPDATE_FAILED;
+  std::string failureDetail;
   OtaUpdater updater;
 
   void onWifiSelectionComplete(bool success);
