@@ -298,6 +298,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
       .buffer_size_tx = 1024,
       .user_data = &releaseParser,
       .crt_bundle_attach = esp_crt_bundle_attach,
+      .max_redirection_count = 5,
       .keep_alive_enable = true,
   };
 
@@ -311,6 +312,9 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   }
 
   esp_err = esp_http_client_set_header(client_handle, "User-Agent", "CrossInk-ESP32-" CROSSINK_VERSION);
+  if (esp_err == ESP_OK) {
+    esp_err = esp_http_client_set_header(client_handle, "Accept", "application/vnd.github.v3+json");
+  }
   if (esp_err != ESP_OK) {
     LOG_ERR("OTA", "esp_http_client_set_header Failed : %s", esp_err_to_name(esp_err));
     esp_http_client_cleanup(client_handle);

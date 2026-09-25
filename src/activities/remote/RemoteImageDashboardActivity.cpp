@@ -417,13 +417,17 @@ void RemoteImageDashboardActivity::shutdownWifiForIdle() {
 }
 
 void RemoteImageDashboardActivity::scheduleInteractiveRefresh(bool succeeded) {
-  const unsigned long intervalMs =
-      succeeded ? std::max<unsigned long>(1u, refreshMinutes()) * 60000UL : INTERACTIVE_RETRY_MS;
-  nextRefreshAt = millis() + intervalMs;
+  unsigned long delayMs = INTERACTIVE_RETRY_MS;
+  if (succeeded) {
+    const uint32_t intervalM = refreshMinutes();
+    const uint32_t seconds = halClock.getSecondsToNextInterval(intervalM);
+    delayMs = seconds > 0 ? (seconds * 1000UL) : (std::max<unsigned long>(1u, intervalM) * 60000UL);
+  }
+  nextRefreshAt = millis() + delayMs;
   // Each refresh brings WiFi and TLS up and down again inside one activity
   // lifetime, which the unattended path avoids by sleeping instead. Log the
   // heap so a card left on screen for hours shows whether that fragments.
-  LOG_INF("REMOTE", "Card refresh in %lu s (heap %u, largest block %u)", intervalMs / 1000UL,
+  LOG_INF("REMOTE", "Card refresh in %lu s (heap %u, largest block %u)", delayMs / 1000UL,
           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
 }
 
