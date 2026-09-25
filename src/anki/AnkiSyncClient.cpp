@@ -3,12 +3,16 @@
 #include <ArduinoJson.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#if defined(FREEINK_NET_WOLFSSL)
+#include <SecureHttpClient.h>
+#endif
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <string>
 
 #include "AnkiStore.h"
 
@@ -24,6 +28,155 @@ bool validBaseUrl(const std::string& value) {
   const bool supported = value.rfind("http://", 0) == 0 || value.rfind("https://", 0) == 0;
   return supported && value.find_first_of(" \t\r\n") == std::string::npos;
 }
+
+#if defined(FREEINK_NET_WOLFSSL)
+AnkiSyncClient::Error pullWolfSsl(const std::string& url, std::string& detail) {
+  Storage.remove(AnkiStore::PULL_TEMP_PATH);
+  HalFile output;
+  if (!Storage.openFileForWrite("ANKI", AnkiStore::PULL_TEMP_PATH, output)) {
+    return AnkiSyncClient::Error::STORAGE_ERROR;
+  }
+
+  freeink::SecureHttpClient http;
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.setInsecure();
+  http.setUserAgent("CrossInk-Anki/1.6.0");
+  http.setReuse(false);
+  if (!http.begin(url)) {
+    output.close();
+    Storage.remove(AnkiStore::PULL_TEMP_PATH);
+    detail = "Invalid URL";
+    return AnkiSyncClient::Error::INVALID_URL;
+  }
+
+  const std::string auth = "Bearer " + ANKI_STORE.getApiToken();
+  http.addHeader("Authorization", auth);
+  http.addHeader("Accept", "application/x-ndjson");
+
+  size_t total = 0;
+  bool writeFailed = false;
+  bool tooLarge = false;
+
+  const int status = http.GET([&](const uint8_t* data, const size_t len) -> bool {
+    total += len;
+    if (total > MAX_PULL_BYTES) {
+      tooLarge = true;
+      return false;
+    }
+    if (output.write(data, len) != len) {
+      writeFailed = true;
+      return false;
+    }
+    return true;
+  });
+
+  output.flush();
+  output.close();
+  AnkiSyncClient::lastHttpCode = status;
+
+  if (status == 401 || status == 403) {
+    Storage.remove(AnkiStore::PULL_TEMP_PATH);
+    return AnkiSyncClient::Error::AUTH_FAILED;
+  }
+  if (status != 200) {
+    Storage.remove(AnkiStore::PULL_TEMP_PATH);
+    if (status < 0) {
+      detail = "Connection failed";
+      return AnkiSyncClient::Error::NETWORK_ERROR;
+    }
+    detail = "HTTP " + std::to_string(status);
+    return AnkiSyncClient::Error::SERVER_ERROR;
+  }
+  if (tooLarge) {
+    Storage.remove(AnkiStore::PULL_TEMP_PATH);
+    return AnkiSyncClient::Error::RESPONSE_TOO_LARGE;
+  }
+  if (writeFailed) {
+    Storage.remove(AnkiStore::PULL_TEMP_PATH);
+    return AnkiSyncClient::Error::STORAGE_ERROR;
+  }
+  if (!http.responseComplete() || total == 0) {
+    Storage.remove(AnkiStore::PULL_TEMP_PATH);
+    detail = "Incomplete stream";
+    return AnkiSyncClient::Error::NETWORK_ERROR;
+  }
+
+  if (!ANKI_STORE.installPulledBatch(detail)) {
+    Storage.remove(AnkiStore::PULL_TEMP_PATH);
+    return AnkiSyncClient::Error::PROTOCOL_ERROR;
+  }
+  return AnkiSyncClient::Error::OK;
+}
+
+AnkiSyncClient::Error pushWolfSsl(const std::string& url, const std::string& payload, std::string& detail) {
+  freeink::SecureHttpClient http;
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.setInsecure();
+  http.setUserAgent("CrossInk-Anki/1.6.0");
+  http.setReuse(false);
+  if (!http.begin(url)) {
+    detail = "Invalid URL";
+    return AnkiSyncClient::Error::INVALID_URL;
+  }
+
+  const std::string auth = "Bearer " + ANKI_STORE.getApiToken();
+  http.addHeader("Authorization", auth);
+  http.addHeader("Accept", "application/json");
+  http.addHeader("Content-Type", "application/json; charset=utf-8");
+  http.addHeader("X-Xteink-Batch-ID", ANKI_STORE.getBatchId());
+
+  const int status = http.POST(payload);
+  AnkiSyncClient::lastHttpCode = status;
+
+  if (status == 401 || status == 403) return AnkiSyncClient::Error::AUTH_FAILED;
+  if (status != 200) {
+    if (status < 0) {
+      detail = "Connection failed";
+      return AnkiSyncClient::Error::NETWORK_ERROR;
+    }
+    detail = "HTTP " + std::to_string(status);
+    return AnkiSyncClient::Error::SERVER_ERROR;
+  }
+
+  const std::string& response = http.getString();
+  if (response.empty() && !http.responseComplete()) {
+    detail = "Incomplete response";
+    return AnkiSyncClient::Error::NETWORK_ERROR;
+  }
+
+  JsonDocument doc;
+  const DeserializationError parseError = deserializeJson(doc, response);
+  if (parseError) {
+    detail = parseError.c_str();
+    return AnkiSyncClient::Error::PROTOCOL_ERROR;
+  }
+
+  const std::string resStatus = doc["status"] | std::string("");
+  if (resStatus == "partial") {
+    const int processed = doc["processed"] | 0;
+    int rejectedCount = 0;
+    if (doc["rejected"].is<JsonArray>()) {
+      rejectedCount = static_cast<int>(doc["rejected"].as<JsonArray>().size());
+    }
+    char summary[96];
+    snprintf(summary, sizeof(summary), "%d ok, %d skipped", processed, rejectedCount);
+    detail = summary;
+    std::string clearError;
+    if (!ANKI_STORE.clearSession(clearError)) {
+      detail += std::string("; ") + clearError;
+      return AnkiSyncClient::Error::STORAGE_ERROR;
+    }
+    return AnkiSyncClient::Error::PARTIAL_RESPONSE;
+  }
+  if (resStatus != "success" && resStatus != "duplicate") {
+    detail = response.size() > 200 ? response.substr(0, 200) + "…" : response;
+    return AnkiSyncClient::Error::PROTOCOL_ERROR;
+  }
+
+  if (!ANKI_STORE.clearSession(detail)) return AnkiSyncClient::Error::STORAGE_ERROR;
+  return AnkiSyncClient::Error::OK;
+}
+#endif
 
 esp_http_client_handle_t createClient(const std::string& url, const esp_http_client_method_t method) {
   esp_http_client_config_t config = {};
@@ -75,6 +228,13 @@ AnkiSyncClient::Error AnkiSyncClient::pull(std::string& detail) {
            static_cast<unsigned>(ANKI_STORE.getMaxCardsPerDeck()),
            static_cast<unsigned>(ANKI_STORE.getMaxCardsTotal()));
   const std::string url(pullUrl);
+
+#if defined(FREEINK_NET_WOLFSSL)
+  if (url.rfind("https://", 0) == 0) {
+    return pullWolfSsl(url, detail);
+  }
+#endif
+
   esp_http_client_handle_t client = createClient(url, HTTP_METHOD_GET);
   if (!client || !setCommonHeaders(client, "application/x-ndjson")) {
     closeClient(client);
@@ -180,6 +340,21 @@ AnkiSyncClient::Error AnkiSyncClient::push(std::string& detail) {
   }
 
   const std::string url = ANKI_STORE.getServerUrl() + "/push";
+
+#if defined(FREEINK_NET_WOLFSSL)
+  if (url.rfind("https://", 0) == 0) {
+    std::string payload;
+    payload.resize(contentLength);
+    const int readBytes = body.read(reinterpret_cast<uint8_t*>(&payload[0]), contentLength);
+    body.close();
+    Storage.remove(AnkiStore::PUSH_TEMP_PATH);
+    if (readBytes != static_cast<int>(contentLength)) {
+      return Error::STORAGE_ERROR;
+    }
+    return pushWolfSsl(url, payload, detail);
+  }
+#endif
+
   esp_http_client_handle_t client = createClient(url, HTTP_METHOD_POST);
   if (!client || !setCommonHeaders(client, "application/json") ||
       esp_http_client_set_header(client, "Content-Type", "application/json; charset=utf-8") != ESP_OK ||
@@ -280,14 +455,13 @@ const char* AnkiSyncClient::errorString(const Error error) {
     case Error::INVALID_URL:
       return "Server URL must begin with http:// or https://";
     case Error::NETWORK_ERROR:
-      // User-facing copy lives in i18n (STR_ANKI_NETWORK_HINT); this is fallback only.
-      return "Start Anki on your computer and make sure both devices are on the same Wi-Fi.";
+      return "Cannot reach Anki server. Check URL and Wi-Fi connection.";
     case Error::AUTH_FAILED:
       return "API token was rejected";
     case Error::SERVER_ERROR:
-      return "Mac Anki server returned an error";
+      return "Anki bridge returned an error";
     case Error::PROTOCOL_ERROR:
-      return "Invalid response from Mac Anki server";
+      return "Invalid response from Anki bridge";
     case Error::STORAGE_ERROR:
       return "SD card write failed";
     case Error::RESPONSE_TOO_LARGE:

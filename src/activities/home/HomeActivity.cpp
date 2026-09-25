@@ -614,7 +614,7 @@ static_assert(HomeActivity::kMaxCachedBooks >= LyraCarouselMetrics::values.homeR
 
 int HomeActivity::getMenuItemCount() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  int count = 5;  // File Browser, Recents, LockScreens, File transfer, Settings
+  int count = 6;  // File Browser, Recents, LockScreens, Anki, File transfer, Settings
   if (!metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     count += getVisibleRecentBookCount();
   } else if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
