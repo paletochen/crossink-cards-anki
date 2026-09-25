@@ -138,10 +138,10 @@ def rename_firmware(source, target, env):
     default_dst = os.path.join(build_dir, f'firmware-{device_type}.bin')
     _copy_artifact(src, default_dst)
 
-    # Relatable firmware name for crossink-cards
-    crossink_cards_dst = os.path.join(build_dir, f'crossink-cards_firmware.bin')
+    # Relatable firmware name for crossink-cards-anki
+    crossink_cards_dst = os.path.join(build_dir, f'crossink-cards-anki_firmware.bin')
     _copy_artifact(src, crossink_cards_dst)
-    crossink_cards_ver_dst = os.path.join(build_dir, f'crossink-cards_v1.6.0_firmware.bin')
+    crossink_cards_ver_dst = os.path.join(build_dir, f'crossink-cards-anki_v1.6.0_firmware.bin')
     _copy_artifact(src, crossink_cards_ver_dst)
 
     if _is_rc_artifact_build(env):
@@ -152,7 +152,7 @@ def rename_firmware(source, target, env):
     if release_version:
         release_dst = os.path.join(build_dir, f'firmware-{device_type}-{release_version}.bin')
         _copy_artifact(src, release_dst)
-        crossink_cards_rel_dst = os.path.join(build_dir, f'crossink-cards_{release_version}_firmware.bin')
+        crossink_cards_rel_dst = os.path.join(build_dir, f'crossink-cards-anki_{release_version}_firmware.bin')
         _copy_artifact(src, crossink_cards_rel_dst)
 
 

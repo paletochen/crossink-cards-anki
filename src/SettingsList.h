@@ -17,6 +17,7 @@
 #include "CrossPointSettings.h"
 #include "DeviceCapabilities.h"
 #include "KOReaderCredentialStore.h"
+#include "anki/AnkiStore.h"
 #include "QuickActions.h"
 #include "activities/settings/SettingsActivity.h"
 #include "util/Dictionary.h"
@@ -897,6 +898,70 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
           KOREADER_STORE.saveToFile();
         },
         "koSyncBehavior", StrId::STR_KOREADER_SYNC));
+
+    // --- Anki Settings (web-accessible, uses AnkiStore) ---
+    add(SettingInfo::DynamicString(
+        StrId::STR_ANKI_SERVER_URL, [] { return AnkiStore::getInstance().getServerUrl(); },
+        [](const std::string& v) {
+          AnkiStore::getInstance().setServerUrl(v);
+          std::string err;
+          AnkiStore::getInstance().saveConfig(err);
+        },
+        "ankiServerUrl", StrId::STR_ANKI));
+    add(SettingInfo::DynamicString(
+        StrId::STR_ANKI_API_TOKEN, [] { return AnkiStore::getInstance().getApiToken(); },
+        [](const std::string& v) {
+          AnkiStore::getInstance().setApiToken(v);
+          std::string err;
+          AnkiStore::getInstance().saveConfig(err);
+        },
+        "ankiApiToken", StrId::STR_ANKI));
+    add(SettingInfo::DynamicEnum(
+        StrId::STR_ANKI_HANDEDNESS, {StrId::STR_ANKI_RIGHT_HANDED, StrId::STR_ANKI_LEFT_HANDED},
+        [] { return AnkiStore::getInstance().isLeftHanded() ? 1 : 0; },
+        [](uint8_t v) {
+          AnkiStore::getInstance().setLeftHanded(v != 0);
+          std::string err;
+          AnkiStore::getInstance().saveConfig(err);
+        },
+        "ankiLeftHanded", StrId::STR_ANKI));
+    add(SettingInfo::DynamicEnum(
+        StrId::STR_ANKI_CARD_FONT, {StrId::STR_ANKI_CARD_FONT_UI, StrId::STR_ANKI_CARD_FONT_READER},
+        [] { return AnkiStore::getInstance().usesReaderFont() ? 1 : 0; },
+        [](uint8_t v) {
+          AnkiStore::getInstance().setUseReaderFont(v != 0);
+          std::string err;
+          AnkiStore::getInstance().saveConfig(err);
+        },
+        "ankiUseReaderFont", StrId::STR_ANKI));
+    add(SettingInfo::DynamicEnum(
+        StrId::STR_ANKI_FONT_SIZE, {StrId::STR_ANKI_FONT_SMALL, StrId::STR_ANKI_FONT_MEDIUM, StrId::STR_ANKI_FONT_LARGE},
+        [] { return static_cast<uint8_t>(AnkiStore::getInstance().getFontScale() - 1); },
+        [](uint8_t v) {
+          AnkiStore::getInstance().setFontScale(static_cast<uint8_t>(v + 1));
+          std::string err;
+          AnkiStore::getInstance().saveConfig(err);
+        },
+        "ankiFontScale", StrId::STR_ANKI));
+    add(SettingInfo::DynamicEnum(
+        StrId::STR_ANKI_ORIENTATION, {StrId::STR_ANKI_ORIENT_PORTRAIT, StrId::STR_ANKI_ORIENT_LANDSCAPE},
+        [] { return AnkiStore::getInstance().getCardOrientation(); },
+        [](uint8_t v) {
+          AnkiStore::getInstance().setCardOrientation(v);
+          std::string err;
+          AnkiStore::getInstance().saveConfig(err);
+        },
+        "ankiOrientation", StrId::STR_ANKI));
+    add(SettingInfo::DynamicEnum(
+        StrId::STR_ANKI_MAX_PER_DECK, {StrId::STR_ANKI_MAX_PER_DECK},
+        [] { return static_cast<uint8_t>(AnkiStore::getInstance().getMaxCardsPerDeck() > 255 ? 250 : AnkiStore::getInstance().getMaxCardsPerDeck()); },
+        [](uint8_t) {},
+        "ankiMaxPerDeck", StrId::STR_ANKI));
+    add(SettingInfo::DynamicEnum(
+        StrId::STR_ANKI_MAX_TOTAL, {StrId::STR_ANKI_MAX_TOTAL},
+        [] { return static_cast<uint8_t>(AnkiStore::getInstance().getMaxCardsTotal() > 255 ? 250 : AnkiStore::getInstance().getMaxCardsTotal()); },
+        [](uint8_t) {},
+        "ankiMaxTotal", StrId::STR_ANKI));
 
     // --- Status Bar Settings (web-only, uses StatusBarSettingsActivity) ---
     add(SettingInfo::Toggle(StrId::STR_CHAPTER_PAGE_COUNT, &CrossPointSettings::statusBarChapterPageCount,

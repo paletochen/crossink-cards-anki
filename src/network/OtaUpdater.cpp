@@ -28,7 +28,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback, void*, s
 
 namespace {
 #ifndef CROSSINK_OTA_RELEASE_URL
-#define CROSSINK_OTA_RELEASE_URL "https://api.github.com/repos/paletochen/crossink-cards/releases/latest"
+#define CROSSINK_OTA_RELEASE_URL "https://api.github.com/repos/paletochen/crossink-cards-anki/releases/latest"
 #endif
 
 constexpr char latestReleaseUrl[] = CROSSINK_OTA_RELEASE_URL;
@@ -163,6 +163,7 @@ bool isMatchingFirmwareAssetName(const char* assetName) {
   if (!endsWith(assetName, binSuffix)) return false;
   if (strcmp(assetName, firmwareAssetName) == 0) return true;
   if (strcmp(assetName, "firmware.bin") == 0) return true;
+  if (startsWith(assetName, "crossink-cards-anki")) return true;
   if (startsWith(assetName, "crossink-cards")) return true;
   if (startsWith(assetName, firmwareAssetStem) && assetName[strlen(firmwareAssetStem)] == '-') return true;
   return false;

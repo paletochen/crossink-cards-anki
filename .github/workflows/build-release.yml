@@ -87,9 +87,9 @@ jobs:
         with:
           name: firmware-build-${{ github.sha }}
           path: |
-            .pio/build/default/crossink-cards_firmware.bin
-            .pio/build/default/crossink-cards_v${{ steps.get_tag.outputs.version }}_firmware.bin
-            .pio/build/default/crossink-cards_v1.6.0_firmware.bin
+            .pio/build/default/crossink-cards-anki_firmware.bin
+            .pio/build/default/crossink-cards-anki_v${{ steps.get_tag.outputs.version }}_firmware.bin
+            .pio/build/default/crossink-cards-anki_v1.6.0_firmware.bin
             .pio/build/default/firmware.bin
             .pio/build/default/firmware-x3-x4.bin
           if-no-files-found: warn
@@ -100,9 +100,9 @@ jobs:
           tag_name: ${{ steps.get_tag.outputs.tag }}
           name: Release ${{ steps.get_tag.outputs.tag }}
           files: |
-            .pio/build/default/crossink-cards_firmware.bin
-            .pio/build/default/crossink-cards_v${{ steps.get_tag.outputs.version }}_firmware.bin
-            .pio/build/default/crossink-cards_v1.6.0_firmware.bin
+            .pio/build/default/crossink-cards-anki_firmware.bin
+            .pio/build/default/crossink-cards-anki_v${{ steps.get_tag.outputs.version }}_firmware.bin
+            .pio/build/default/crossink-cards-anki_v1.6.0_firmware.bin
             .pio/build/default/firmware.bin
             .pio/build/default/firmware-x3-x4.bin
             .pio/build/default/firmware-x3-x4-v${{ steps.get_tag.outputs.version }}.bin

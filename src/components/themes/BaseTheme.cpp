@@ -751,7 +751,7 @@ void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
                                const std::function<const char*(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {
   (void)rowIcon;
-  constexpr int maxVisibleItems = 8;
+  constexpr int maxVisibleItems = 9;
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int rowStep = metrics.menuRowHeight + metrics.menuSpacing;
   const int availableHeight = std::max(0, rect.height - metrics.verticalSpacing);
