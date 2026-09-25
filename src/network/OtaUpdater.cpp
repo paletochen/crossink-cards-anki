@@ -288,19 +288,15 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   esp_err_t esp_err;
   ReleaseJsonParser releaseParser(isMatchingFirmwareAssetName);
 
-  esp_http_client_config_t client_config = {
-      .url = latestReleaseUrl,
-      .event_handler = release_manifest_event_handler,
-      // 4096 holds the API response headers; the 32KB body streams through the
-      // parser in chunks so RX needn't be larger. TX only carries our GET.
-      // Both free before installUpdate, so smaller leaves it less fragmentation.
-      .buffer_size = 4096,
-      .buffer_size_tx = 1024,
-      .user_data = &releaseParser,
-      .crt_bundle_attach = esp_crt_bundle_attach,
-      .max_redirection_count = 5,
-      .keep_alive_enable = true,
-  };
+  esp_http_client_config_t client_config = {};
+  client_config.url = latestReleaseUrl;
+  client_config.event_handler = release_manifest_event_handler;
+  client_config.buffer_size = 4096;
+  client_config.buffer_size_tx = 1024;
+  client_config.user_data = &releaseParser;
+  client_config.crt_bundle_attach = esp_crt_bundle_attach;
+  client_config.max_redirection_count = 5;
+  client_config.keep_alive_enable = true;
 
   totalBytesReceived = 0;
   LOG_DBG("OTA", "Checking for update (current: %s)", CROSSINK_VERSION);
