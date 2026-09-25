@@ -25,6 +25,9 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback, void*, s
 #include "mbedtls/sha256.h"
 #include "network/HttpDownloader.h"
 #include "network/WifiPowerSaveGuard.h"
+#if defined(FREEINK_NET_WOLFSSL)
+#include <SecureHttpClient.h>
+#endif
 
 namespace {
 #ifndef CROSSINK_OTA_RELEASE_URL
@@ -288,67 +291,90 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   esp_err_t esp_err;
   ReleaseJsonParser releaseParser(isMatchingFirmwareAssetName);
 
+  totalBytesReceived = 0;
+  lastErrorDetail.clear();
+  LOG_INF("OTA", "Checking for update (current: %s) from %s", CROSSINK_VERSION, latestReleaseUrl);
+
   esp_http_client_config_t client_config = {};
   client_config.url = latestReleaseUrl;
   client_config.event_handler = release_manifest_event_handler;
   client_config.buffer_size = 4096;
   client_config.buffer_size_tx = 1024;
+  client_config.timeout_ms = 30000;
   client_config.user_data = &releaseParser;
   client_config.crt_bundle_attach = esp_crt_bundle_attach;
   client_config.max_redirection_count = 5;
-  client_config.keep_alive_enable = true;
+  client_config.keep_alive_enable = false;
 
-  totalBytesReceived = 0;
-  lastErrorDetail.clear();
-  LOG_INF("OTA", "Checking for update (current: %s) from %s", CROSSINK_VERSION, latestReleaseUrl);
-
+  bool manifestFetched = false;
   esp_http_client_handle_t client_handle = esp_http_client_init(&client_config);
-  if (!client_handle) {
-    LOG_ERR("OTA", "HTTP Client Handle Failed");
-    lastErrorDetail = "HTTP init failed";
-    return INTERNAL_UPDATE_ERROR;
-  }
+  if (client_handle) {
+    esp_err = esp_http_client_set_header(client_handle, "User-Agent", "CrossInk-ESP32-" CROSSINK_VERSION);
+    if (esp_err == ESP_OK) {
+      esp_err = esp_http_client_set_header(client_handle, "Accept", "application/vnd.github.v3+json");
+    }
+    if (esp_err == ESP_OK) {
+      esp_err = esp_http_client_perform(client_handle);
+      const int statusCode = esp_http_client_get_status_code(client_handle);
+      const int64_t contentLength = esp_http_client_get_content_length(client_handle);
+      LOG_INF("OTA", "HTTP perform completed: err=%s, status=%d, content_length=%lld, rx=%zu",
+              esp_err_to_name(esp_err), statusCode, contentLength, totalBytesReceived);
 
-  esp_err = esp_http_client_set_header(client_handle, "User-Agent", "CrossInk-ESP32-" CROSSINK_VERSION);
-  if (esp_err == ESP_OK) {
-    esp_err = esp_http_client_set_header(client_handle, "Accept", "application/vnd.github.v3+json");
-  }
-  if (esp_err != ESP_OK) {
-    LOG_ERR("OTA", "esp_http_client_set_header Failed : %s", esp_err_to_name(esp_err));
-    lastErrorDetail = "Header config error";
-    esp_http_client_cleanup(client_handle);
-    return INTERNAL_UPDATE_ERROR;
-  }
-
-  esp_err = esp_http_client_perform(client_handle);
-  int statusCode = esp_http_client_get_status_code(client_handle);
-  int64_t contentLength = esp_http_client_get_content_length(client_handle);
-  LOG_INF("OTA", "HTTP perform completed: err=%s, status=%d, content_length=%lld, rx=%zu",
-          esp_err_to_name(esp_err), statusCode, contentLength, totalBytesReceived);
-
-  if (esp_err != ESP_OK) {
-    LOG_ERR("OTA", "esp_http_client_perform Failed : %s (HTTP status %d)", esp_err_to_name(esp_err), statusCode);
-    lastErrorDetail = "Check failed: " + std::string(esp_err_to_name(esp_err));
-    esp_http_client_cleanup(client_handle);
-    return HTTP_ERROR;
-  }
-
-  if (statusCode < 200 || statusCode >= 300) {
-    LOG_ERR("OTA", "HTTP server returned error status: %d (rx: %zu bytes)", statusCode, totalBytesReceived);
-    if (statusCode == 403) {
-      lastErrorDetail = "GitHub rate limit (403)";
-    } else {
-      lastErrorDetail = "HTTP status " + std::to_string(statusCode);
+      if (esp_err == ESP_OK && statusCode >= 200 && statusCode < 300 && totalBytesReceived > 0) {
+        manifestFetched = true;
+      } else if (statusCode == 403) {
+        lastErrorDetail = "GitHub rate limit (403)";
+      } else if (esp_err != ESP_OK) {
+        lastErrorDetail = "Check failed: " + std::string(esp_err_to_name(esp_err));
+      } else {
+        lastErrorDetail = "HTTP status " + std::to_string(statusCode);
+      }
     }
     esp_http_client_cleanup(client_handle);
-    return HTTP_ERROR;
   }
 
-  esp_err = esp_http_client_cleanup(client_handle);
-  if (esp_err != ESP_OK) {
-    LOG_ERR("OTA", "esp_http_client_cleanup Failed : %s", esp_err_to_name(esp_err));
-    lastErrorDetail = "Cleanup failed";
-    return INTERNAL_UPDATE_ERROR;
+#if defined(FREEINK_NET_WOLFSSL)
+  if (!manifestFetched) {
+    LOG_INF("OTA", "esp_http_client check failed or unavailable; falling back to wolfSSL SecureHttpClient");
+    releaseParser.reset();
+    totalBytesReceived = 0;
+
+    freeink::SecureHttpClient http;
+    http.setTimeout(30000);
+    http.setInsecure();
+    http.setFollowRedirects(5);
+    http.setUserAgent("CrossInk-ESP32-" CROSSINK_VERSION);
+    http.addHeader("Accept", "application/vnd.github.v3+json");
+
+    if (http.begin(latestReleaseUrl)) {
+      const int status = http.GET([&releaseParser](const uint8_t* data, const size_t len) {
+        totalBytesReceived += len;
+        releaseParser.feed(reinterpret_cast<const char*>(data), len);
+        return true;
+      });
+
+      LOG_INF("OTA", "wolfSSL check completed: status=%d, rx=%zu, complete=%d", status, totalBytesReceived,
+              http.responseComplete() ? 1 : 0);
+
+      if (status >= 200 && status < 300 && totalBytesReceived > 0) {
+        manifestFetched = true;
+        lastErrorDetail.clear();
+      } else if (status == 403) {
+        lastErrorDetail = "GitHub rate limit (403)";
+      } else if (status < 0) {
+        lastErrorDetail = "Check failed: wolfSSL TLS";
+      } else {
+        lastErrorDetail = "HTTP status " + std::to_string(status);
+      }
+    } else {
+      LOG_ERR("OTA", "wolfSSL rejected URL: %s", latestReleaseUrl);
+    }
+  }
+#endif
+
+  if (!manifestFetched) {
+    LOG_ERR("OTA", "Failed to retrieve release manifest: %s", lastErrorDetail.c_str());
+    return HTTP_ERROR;
   }
 
   LOG_INF("OTA", "Response received: %zu bytes total. Parser: tag=%s firmware=%s", totalBytesReceived,
